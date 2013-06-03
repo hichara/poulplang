@@ -18,6 +18,8 @@
 #include <llvm/Target/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/IRBuilder.h>
+#include <llvm/Constants.h>
+
 using namespace llvm;
 
 class StatementBlock;
@@ -30,11 +32,15 @@ public:
 
 class CodeGenContext {
     std::stack<CodeGenBlock *> blocks;
-    Function *mainFunction;
 
 public:
     Module *module;
+    Function *printfFunction;
+    Function *currentFunction;
+    Function *mainFunction;
     CodeGenContext() { module = new Module("main", getGlobalContext()); }
+    
+    std::map<std::string, Value*> functionArguments;
 
     std::string generateCode(StatementBlock& root);
     GenericValue runCode();

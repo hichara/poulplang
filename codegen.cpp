@@ -1,16 +1,44 @@
 #include "ast.h"
 #include "codegen.h"
+#include "log.h"
 #include "parser.hpp"
 #include <iostream>
 #include <typeinfo>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/IRBuilder.h>
 
 using namespace std;
+
+int PrintfMethodCall::instanceCount = 0;
+int BranchStatement::instanceCount = 0;
+
+static llvm::Function* getPutcharPrototype(llvm::LLVMContext& ctx, llvm::Module *mod)
+{
+    vector<const Type*> argTypes;
+    argTypes.push_back(Type::getInt32Ty(ctx));
+    FunctionType *ftype = FunctionType::get(Type::getInt32Ty(ctx), argTypes, false);
+    Function* func = Function::Create(ftype, GlobalValue::ExternalLinkage, "putchar", mod);
+    func->setCallingConv(llvm::CallingConv::C);
+    
+    return func;
+}
+
+
+static llvm::Function* getPrintfPrototype(llvm::LLVMContext& ctx, llvm::Module *mod)
+{
+    std::vector<const Type*> argTypes;
+    argTypes.push_back(Type::getInt8PtrTy(ctx));
+    FunctionType* ftype = FunctionType::get( Type::getInt32Ty(ctx), argTypes, true);
+    Function *func = Function::Create( ftype, Function::ExternalLinkage, Twine("printf"), mod );
+    func->setCallingConv(llvm::CallingConv::C);
+
+    return func;
+}
 
 /* Compile the AST into a module */
 std::string CodeGenContext::generateCode(StatementBlock& root)
 {
-    std::cout << "Generating code...\n";
+    Log::Debug() << "Generating code...\n";
 
     /* Create the top level interpreter function to call as entry */
     vector<const Type*> argTypes;
@@ -22,13 +50,12 @@ std::string CodeGenContext::generateCode(StatementBlock& root)
     /* Push a new variable/block context */
     pushBlock(bblock);
 
-    /* Create the putchar function */
-    vector<const Type*> putcharArgTypes;
-    putcharArgTypes.push_back(Type::getInt32Ty(getGlobalContext()));
-    FunctionType *putcharFunctionType = FunctionType::get(Type::getInt32Ty(getGlobalContext()), putcharArgTypes, false);
-    Function* putcharFunction = Function::Create(putcharFunctionType, GlobalValue::ExternalLinkage, "putchar", module);
-    putcharFunction->setCallingConv(llvm::CallingConv::C);
+    /* Create the printf function declaration */
+    printfFunction = getPrintfPrototype( getGlobalContext(), module );
 
+    /* Create the putchar function declaration */
+    getPutcharPrototype( getGlobalContext(), module );
+    
     root.codeGen(*this); /* emit bytecode for the toplevel block */
 
     ReturnInst::Create(getGlobalContext(), ConstantInt::get(Type::getInt32Ty(getGlobalContext()), 0), bblock);
@@ -38,7 +65,7 @@ std::string CodeGenContext::generateCode(StatementBlock& root)
     /* Print the bytecode in a human-readable format
        to see if our program compiled properly
      */
-    std::cout << "Code is generated.\n";
+    Log::Debug() << "Code is generated.\n";
 
     std::string outputString;
     raw_ostream* outputStream = new raw_string_ostream(outputString);
@@ -51,17 +78,17 @@ std::string CodeGenContext::generateCode(StatementBlock& root)
 
 /* Executes the AST by running the main function */
 GenericValue CodeGenContext::runCode() {
-    std::cout << "Running code...\n";
+    Log::Debug() << "Running code...\n";
     std::string error;
     llvm::InitializeNativeTarget();
     ExecutionEngine *ee = ExecutionEngine::create(module, false, &error);
     vector<GenericValue> noargs;
     if( ee == 0 ){
-        cout << "Error: " << error << endl;
+        Log::Error() << "Error: " << error << endl;
         return GenericValue();
     } else {
         GenericValue v = ee->runFunction(mainFunction, noargs);
-        std::cout << "Code was run.\n";
+        Log::Debug() << "Code was run.\n";
         return v;
     }
 }
@@ -82,23 +109,29 @@ static const Type *typeOf(const Identifier& type)
 
 Value* Integer::codeGen(CodeGenContext& context)
 {
-    std::cout << "Creating integer: " << value << std::endl;
+    Log::Debug() << "Creating integer: " << value << std::endl;
     return ConstantInt::get(Type::getInt32Ty(getGlobalContext()), value, true);
 }
 
 Value* Double::codeGen(CodeGenContext& context)
 {
-    std::cout << "Creating double: " << value << std::endl;
+    Log::Debug() << "Creating double: " << value << std::endl;
     return ConstantFP::get(Type::getDoubleTy(getGlobalContext()), value);
 }
 
 Value* Identifier::codeGen(CodeGenContext& context)
 {
-    std::cout << "Creating identifier reference: " << name << std::endl;
+    if( context.functionArguments.find(name) != context.functionArguments.end() )
+    {
+        return context.functionArguments[name];
+    }
+
+    Log::Debug() << "Creating identifier reference: " << name << std::endl;
     if (context.locals().find(name) == context.locals().end()) {
-        std::cerr << "undeclared variable " << name << std::endl;
+        Log::Error() << "undeclared variable " << name << std::endl;
         return NULL;
     }
+    Log::Debug() << context.locals()[name] << "\n";
     return new LoadInst(context.locals()[name], "", false, context.currentBlock());
 }
 
@@ -106,7 +139,9 @@ Value* MethodCall::codeGen(CodeGenContext& context)
 {
     Function *function = context.module->getFunction(methodName.name.c_str());
     if (function == NULL) {
-        std::cerr << "no such function " << methodName.name << std::endl;
+        Log::Error() << " no such function " << methodName.name << std::endl;
+        exit( -1 );
+        return NULL;
     }
     std::vector<Value*> args;
     ExpressionList::const_iterator it;
@@ -114,34 +149,94 @@ Value* MethodCall::codeGen(CodeGenContext& context)
         args.push_back((**it).codeGen(context));
     }
     CallInst *call = CallInst::Create(function, args.begin(), args.end(), "", context.currentBlock());
-    std::cout << "Creating method call: " << methodName.name << std::endl;
+    Log::Debug() << "Creating method call: " << methodName.name << std::endl;
+    return call;
+}
+
+Value* PrintfMethodCall::codeGen(CodeGenContext& context)
+{
+    String name = getUniqueName();
+    String fmt = format.substr(1, format.size()-2);
+    
+    /* replace \n */
+    int i = 0;
+    while ( i < fmt.size()-1 ){
+        if( fmt[i] == '\\' && fmt[i+1] == 'n' ){
+            fmt.replace(i , i+1, "\13\15");
+        }
+        ++i;
+    }
+    
+    /* format string */
+    Constant *format_const = ConstantArray::get(getGlobalContext(), fmt.c_str());
+    GlobalVariable *var = new GlobalVariable(
+        *context.module, ArrayType::get(IntegerType::get(getGlobalContext(), 8), fmt.size()+1),
+        true, GlobalValue::PrivateLinkage, format_const, name.c_str());
+
+    /* helper zero constant */
+    Constant *zero = Constant::getNullValue( IntegerType::getInt32Ty(getGlobalContext()));
+
+    Constant* indices[2];
+    indices[0] = zero;
+    indices[1] = zero;
+    
+    Constant *var_ref = ConstantExpr::getGetElementPtr(var, indices, 2);
+
+    std::vector<Value*> args;
+    args.push_back(var_ref);
+    
+    /* add the rest of the arguments */
+    ExpressionList::const_iterator it;
+    for (it = arguments.begin(); it != arguments.end(); it++) {
+        args.push_back((**it).codeGen(context));
+    }
+
+    CallInst *call = CallInst::Create(context.printfFunction, args.begin(), args.end(), "", context.currentBlock());
+    call->setTailCall(false);
+    
     return call;
 }
 
 Value* BinaryOperation::codeGen(CodeGenContext& context)
 {
-    std::cout << "Creating binary operation " << op << std::endl;
+    Log::Debug() << "Creating binary operation " << op << std::endl;
     Instruction::BinaryOps instr;
     switch (op) {
-    case T_PLUS: 	instr = Instruction::Add; goto math;
-    case T_MINUS: 	instr = Instruction::Sub; goto math;
-    case T_MUL: 		instr = Instruction::Mul; goto math;
-    case T_DIV: 		instr = Instruction::SDiv; goto math;
-
-        /* TODO comparison */
+   
+    // Arithmetic Operations
+    case T_PLUS:    return BinaryOperator::Create( Instruction::Add,
+            lhs.codeGen(context), rhs.codeGen(context), "", context.currentBlock());
+    case T_MINUS:   return BinaryOperator::Create( Instruction::Sub,
+            lhs.codeGen(context), rhs.codeGen(context), "", context.currentBlock());
+    case T_MUL:     return BinaryOperator::Create( Instruction::Mul,
+            lhs.codeGen(context), rhs.codeGen(context), "", context.currentBlock());
+    case T_DIV:     return BinaryOperator::Create( Instruction::SDiv,
+            lhs.codeGen(context), rhs.codeGen(context), "", context.currentBlock());
+    
+    // Logical Operations
+    case T_CMP_EQ:  return  CmpInst::Create( Instruction::ICmp, CmpInst::ICMP_EQ,
+            lhs.codeGen(context), rhs.codeGen(context), "", context.currentBlock());
+    case T_CMP_NE:  return  CmpInst::Create( Instruction::ICmp, CmpInst::ICMP_NE,
+            lhs.codeGen(context), rhs.codeGen(context), "", context.currentBlock());
+    case T_CMP_LT:  return  CmpInst::Create( Instruction::ICmp, CmpInst::ICMP_SLT,
+            lhs.codeGen(context), rhs.codeGen(context), "", context.currentBlock());
+    case T_CMP_GT:  return  CmpInst::Create( Instruction::ICmp, CmpInst::ICMP_SGT,
+            lhs.codeGen(context), rhs.codeGen(context), "", context.currentBlock());
+    case T_CMP_LE:  return  CmpInst::Create( Instruction::ICmp, CmpInst::ICMP_SLE,
+            lhs.codeGen(context), rhs.codeGen(context), "", context.currentBlock());
+    case T_CMP_GE:  return  CmpInst::Create( Instruction::ICmp, CmpInst::ICMP_SGE,
+            lhs.codeGen(context), rhs.codeGen(context), "", context.currentBlock());
     }
 
     return NULL;
-math:
-    return BinaryOperator::Create(instr, lhs.codeGen(context),
-                                  rhs.codeGen(context), "", context.currentBlock());
 }
 
 Value* Assignment::codeGen(CodeGenContext& context)
 {
-    std::cout << "Creating assignment for " << lhs.name << std::endl;
+    Log::Debug() << "Creating assignment for " << lhs.name << std::endl;
     if (context.locals().find(lhs.name) == context.locals().end()) {
         std::cerr << "undeclared variable " << lhs.name << std::endl;
+        exit( -1 );
         return NULL;
     }
     return new StoreInst(rhs->codeGen(context), context.locals()[lhs.name], false, context.currentBlock());
@@ -152,22 +247,22 @@ Value* StatementBlock::codeGen(CodeGenContext& context)
     StatementList::const_iterator it;
     Value *last = NULL;
     for (it = statements.begin(); it != statements.end(); it++) {
-        std::cout << "Generating code for " << typeid(**it).name() << std::endl;
+    Log::Debug() << "Generating code for " << typeid(**it).name() << std::endl;
         last = (**it).codeGen(context);
     }
-    std::cout << "Creating block" << std::endl;
+    Log::Debug() << "Creating block" << std::endl;
     return last;
 }
 
 Value* ExpressionStatement::codeGen(CodeGenContext& context)
 {
-    std::cout << "Generating code for " << typeid(expression).name() << std::endl;
+    Log::Debug() << "Generating code for " << typeid(expression).name() << std::endl;
     return expression.codeGen(context);
 }
 
 Value* VariableDeclaration::codeGen(CodeGenContext& context)
 {
-    std::cout << "Creating variable declaration " << type.name << " " << name.name << std::endl;
+    Log::Debug() << "Creating variable declaration " << type.name << " " << name.name << std::endl;
     AllocaInst *alloc = new AllocaInst(typeOf(type), name.name.c_str(), context.currentBlock());
     context.locals()[name.name] = alloc;
     if (assignmentExpression != NULL) {
@@ -188,22 +283,55 @@ Value* FunctionDeclaration::codeGen(CodeGenContext& context)
     Function *function = Function::Create(ftype, GlobalValue::ExternalLinkage, functionName.name.c_str(), context.module);
     function->setCallingConv(llvm::CallingConv::C);
 
+    context.currentFunction = function;
+    context.functionArguments.clear();
     int i = 0;
-    for( Function::arg_iterator it = function->arg_begin(); it != function->arg_end(); ++it ){
-        it->setName( arguments.at(i++)->name.name );
+    for( auto it = function->arg_begin(); it != function->arg_end(); ++it ){
+        it->setName( arguments.at(i)->name.name );
+        context.functionArguments[arguments.at(i++)->name.name] = it;
     }
 
-    BasicBlock *bblock = BasicBlock::Create(getGlobalContext(), "entry", function, 0);
+    BasicBlock *bblock = BasicBlock::Create(getGlobalContext(), "entry", function);
     context.pushBlock(bblock);
 
-    for (it = arguments.begin(); it != arguments.end(); it++) {
-        (**it).codeGen(context);
-    }
-
     block.codeGen(context);
-    ReturnInst::Create(getGlobalContext(), bblock);
+    //ReturnInst::Create(getGlobalContext(), bblock);
 
     context.popBlock();
-    std::cout << "Creating function: " << functionName.name << std::endl;
+    Log::Debug() << "Creating function: " << functionName.name << std::endl;
+    context.currentFunction = context.mainFunction;
     return function;
+}
+
+Value* ReturnStatement::codeGen(CodeGenContext& context)
+{
+    Log::Debug() << "Generating code for " << typeid(this).name() << std::endl;
+    return ReturnInst::Create(getGlobalContext(), value->codeGen(context), context.currentBlock());
+}
+
+Value* BranchStatement::codeGen(CodeGenContext& context)
+{
+    Log::Debug() << "Generating code for " << typeid(this).name() << std::endl;
+    IRBuilder<> builder(context.currentBlock());
+    Value* test = testExpression->codeGen( context );
+    
+    BasicBlock *btrue = BasicBlock::Create(getGlobalContext(), getUniqueName(), context.currentFunction);
+        BasicBlock *bfalse = NULL;
+    if( hasFalseBranch ){
+        bfalse = BasicBlock::Create(getGlobalContext(), getUniqueName(), context.currentFunction);
+    }
+
+    builder.CreateCondBr(test, btrue, bfalse);
+
+    context.pushBlock(btrue);
+    blockTrue.codeGen(context);
+    context.popBlock();
+ 
+    if( hasFalseBranch ){   
+        context.pushBlock(bfalse);
+        blockFalse.codeGen(context);
+        context.popBlock();
+    }
+
+    return NULL;
 }

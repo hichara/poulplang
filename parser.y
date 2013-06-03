@@ -6,7 +6,12 @@
 StatementBlock* programBlock;
 
 extern int yylex();
+extern int lineNumber;
+extern char* yytext;
 int yyerror( const char* err );
+
+bool parseFailed = false;
+
 %}
 
 %union {
@@ -27,21 +32,21 @@ int yyerror( const char* err );
 /*
  *  Token Declaration
  */
-%token <string> T_IDENTIFIER T_BUILTIN_TYPE
+%token <string> T_IDENTIFIER T_BUILTIN_TYPE T_STR T_IF T_ELSE
 %token <number> T_NUM_INTEGER T_NUM_DOUBLE
-%token <token> T_EQUAL T_CMP_EQ T_CMP_NE T_CMP_LT T_CMP_LE
+%token <token> T_EQUAL T_CMP_EQ T_CMP_NE T_CMP_LT T_CMP_LE T_PRINTF T_RETURN
 %token <token> T_CMP_GT T_CMP_GE T_LPAREN T_RPAREN T_LBRACE T_RBRACE
 %token <token> T_SEMI T_PLUS T_MINUS T_DIV T_MUL T_COMMA
 
 /*
  *  Rules Declaration
  */
-%type <ident>    ident;
-%type <expr>     numeric expr;
-%type <varVec>  func_decl_args;
-%type <exprList> call_args;
+%type <ident>    identifier
+%type <expr>     numeric expr factor term arith_expr printf logic_expr fun_call
+%type <varVec>   func_decl_args
+%type <exprList> call_args
 %type <block>    program stmts block
-%type <stmt>     stmt var_decl func_decl
+%type <stmt>     stmt var_decl func_decl return_stmt branch_stmt branch_stmt2
 %type <token>    comparison
 
 %left T_PLUS T_MINUS
@@ -59,20 +64,35 @@ stmts   : stmt T_SEMI                   { $$ = new StatementBlock(); $$->stateme
 ;
 
 stmt    : var_decl | func_decl | expr   { $$ = new ExpressionStatement( *$1 ); }
+        | return_stmt                   { $$ = $1; }
+        | branch_stmt                   { $$ = $1; }
+        | branch_stmt2                  { $$ = $1; }
+;
+
+return_stmt : T_RETURN expr
+                                        { $$ = new ReturnStatement( $2 ); }
+;
+
+branch_stmt : T_IF T_LPAREN expr T_RPAREN block T_ELSE block
+                                        { $$ = new BranchStatement( $3, *$5, *$7 ); }
+
+branch_stmt2 : T_IF T_LPAREN expr T_RPAREN block
+                                        { $$ = new BranchStatement( $3, *$5 ); }
 ;
 
 block   : T_LBRACE stmts T_RBRACE       { $$ = $2; }
         | T_LBRACE T_RBRACE             { $$ = new StatementBlock(); }
 ;
 
-ident   : T_IDENTIFIER                  { $$ = new Identifier( *$1 ); }
+identifier: T_IDENTIFIER                { $$ = new Identifier( *$1 ); }
 ;
 
-var_decl : ident ident                  { $$ = new VariableDeclaration( *$1, *$2 ); }
-         | ident ident T_EQUAL expr     { $$ = new VariableDeclaration( *$1, *$2, $4 ); }
+var_decl : identifier identifier        { $$ = new VariableDeclaration( *$1, *$2 ); }
+         | identifier identifier T_EQUAL expr
+                                        { $$ = new VariableDeclaration( *$1, *$2, $4 ); }
 ;
 
-func_decl : ident ident T_LPAREN func_decl_args T_RPAREN block
+func_decl : identifier identifier T_LPAREN func_decl_args T_RPAREN block
                                         { $$ = new FunctionDeclaration( *$1, *$2, *$4, *$6 ); }
 ;
 
@@ -86,13 +106,18 @@ numeric : T_NUM_INTEGER                 { $$ = new Integer( $1 ); }
         | T_NUM_DOUBLE                  { $$ = new Double( $1 ); }
 ;
 
-expr : ident T_EQUAL expr               { $$ = new Assignment(*$<ident>1, $3); }
-     | ident T_LPAREN call_args T_RPAREN
-                                        { $$ = new MethodCall(*$1, *$3); }
-     | ident                            { $<ident>$ = $1; }
+expr : identifier T_EQUAL expr          { $$ = new Assignment(*$<ident>1, $3); }
+     | fun_call                         { $$ = $1; }
+     | identifier                       { $<ident>$ = $1; }
+     | printf                           { $$ = $1; } 
      | numeric
-     | expr comparison expr             { $$ = new BinaryOperation($2, *$1, *$3); }
+     | arith_expr                       { $$ = $1; }
+     | logic_expr                       { $$ = $1; }
      | T_LPAREN expr T_RPAREN           { $$ = $2; }
+;
+
+fun_call : identifier T_LPAREN call_args T_RPAREN
+                                        { $$ = new MethodCall(*$1, *$3); }
 ;
 
 call_args : /*empty*/                   { $$ = new ExpressionList(); }
@@ -100,15 +125,38 @@ call_args : /*empty*/                   { $$ = new ExpressionList(); }
           | call_args T_COMMA expr      { $1->push_back($3); }
 ;
 
-comparison : T_CMP_EQ | T_CMP_NE | T_CMP_LT | T_CMP_LE | T_CMP_GT | T_CMP_GE
-           | T_PLUS | T_MINUS | T_MUL | T_DIV
+arith_expr  : arith_expr T_PLUS term    { $$ = new BinaryOperation($2, *$1, *$3); }
+            | arith_expr T_MINUS term   { $$ = new BinaryOperation($2, *$1, *$3); }
+            | term                      { $$ = $1; }
 ;
 
+term    : term T_MUL factor             { $$ = new BinaryOperation($2, *$1, *$3); }
+        | term T_DIV factor             { $$ = new BinaryOperation($2, *$1, *$3); }
+        | factor                        { $$ = $1; }
+;
+
+factor  : numeric                       { $$ = $1; }
+        | identifier                    { $$ = $1; }
+        | fun_call                      { $$ = $1; }
+        | T_MINUS factor                { $$ = new BinaryOperation(T_MINUS, *(new Integer(0)), *$2); }
+        | T_LPAREN arith_expr T_RPAREN  { $$ = $2; }
+;
+
+logic_expr : expr comparison expr       { $$ = new BinaryOperation( $2, *$1, *$3 ); }
+;
+
+comparison : T_CMP_EQ | T_CMP_NE | T_CMP_LT | T_CMP_LE | T_CMP_GT | T_CMP_GE
+;
+
+printf : T_PRINTF T_LPAREN T_STR T_COMMA call_args T_RPAREN
+                                        { $$ = new PrintfMethodCall( *$3, *$5 ); }
+;
 %%
 
 
 int yyerror( const char* err )
 {
-    printf("ERROR: %s\n", err);
+    printf("ERROR at line %d, unexpected \'%s\'\n", lineNumber, yytext );
+    parseFailed = true;
     return 0;
 }

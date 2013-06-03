@@ -3,6 +3,7 @@
 
 #include <sstream>
 #include <string>
+#include <stdio.h>
 #include <vector>
 #include <llvm/Value.h>
 
@@ -107,17 +108,72 @@ public:
     virtual llvm::Value* codeGen(CodeGenContext& context);
 };
 
+class PrintfMethodCall : public Expression {
+public:
+    const String format;
+    ExpressionList arguments;
+
+    static String getUniqueName() { 
+        char buffer[8];
+        sprintf( buffer, ".str%d", instanceCount );
+        instanceCount += 1;
+        return buffer; 
+    }
+
+    PrintfMethodCall( const String& format, ExpressionList& args ) :
+        format( format ), arguments( args ) { }
+
+    virtual llvm::Value* codeGen(CodeGenContext& context);
+
+private:
+    static int instanceCount;
+};
+
 class Assignment : public Expression {
 public:
     const Identifier& lhs;
     Expression* rhs;
-
+    
     Assignment( const Identifier& lhs, Expression* rhs ) :
         lhs(lhs), rhs(rhs) { }
 
     virtual llvm::Value* codeGen(CodeGenContext& context);
 };
 
+class BranchStatement: public Statement {
+public:
+    Expression* testExpression;
+    StatementBlock blockTrue;
+    StatementBlock blockFalse;
+    bool hasFalseBranch;
+    
+    BranchStatement( Expression* test, StatementBlock& blockTrue, StatementBlock blockFalse ) :
+        testExpression( test ), blockTrue( blockTrue ), blockFalse( blockFalse ), hasFalseBranch(true) { }
+
+    BranchStatement( Expression* test, StatementBlock& blockTrue ) :
+        testExpression( test ), blockTrue( blockTrue ), hasFalseBranch(false) { }
+
+    String getUniqueName(){
+        char buffer[16];
+        sprintf( buffer, "branch%d", instanceCount );
+        instanceCount += 1;
+        return buffer; 
+    }
+    
+    virtual llvm::Value* codeGen(CodeGenContext& context);
+
+private:
+    static int instanceCount;
+};
+
+class ReturnStatement: public Statement {
+public:
+    Expression* value;
+    ReturnStatement( Expression* value ) :
+        value( value ) { }
+
+    virtual llvm::Value* codeGen(CodeGenContext& context);
+};
 
 class FunctionDeclaration : public Statement {
 public:

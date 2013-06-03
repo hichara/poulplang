@@ -1,10 +1,18 @@
-void do_math(int a) {
-    int a1 = 10;
-    int b1 = 12;
-    int c1 = a1 + b1;
-    int x = a * 5 + 3;
-    putchar(c1);
+int fibo( int n ){
+    if( n < 3 ){
+        return 1;
+    } else {
+        return fibo( n - 1 ) + fibo( n - 2 );
+    };
 };
 
-do_math(10);
-do_math(12);
+double first_fibo( int count ){
+    if( count > 0 ){
+        first_fibo( count - 1 );
+        printf( "Fib[%d] = %d\n", count, fibo(count) );
+        return 0.5;
+    } else {
+        return 0.1;
+    };
+};
+

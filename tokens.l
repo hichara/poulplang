@@ -6,6 +6,9 @@
 
 extern bool debugTokens;
 
+int lineNumber = 1;
+
+
 // Helper export functions
 inline int strToken( int token ){
     yylval.string = new std::string( yytext, yyleng );
@@ -39,9 +42,17 @@ inline double dblToken( int token ){
 
 %}
 
-%%
-[ \t\n]                 ;
+LINE \n
 
+%%
+[ \\t]                  ;
+"//"                    { singleLineComment = true; }
+{LINE}                  { ++lineNumber; }
+"if"                    return numToken(T_IF);
+"else"                  return numToken(T_ELSE);
+"return"                return numToken(T_RETURN);
+"printf"                return numToken(T_PRINTF);
+\".*\"                  return strToken(T_STR);
 [a-zA-Z_][a-zA-Z0-9_]*  return strToken(T_IDENTIFIER);
 [0-9]+\.[0-9]*          return dblToken(T_NUM_DOUBLE);
 [0-9]+                  return dblToken(T_NUM_INTEGER);
@@ -62,7 +73,7 @@ inline double dblToken( int token ){
 "/"                     return numToken(T_DIV);
 "*"                     return numToken(T_MUL);
 ","                     return numToken(T_COMMA);
-.                       printf("Unkown token!\n"); yyterminate();
+.                       yyterminate();
 %%
 
 int yywrap()
