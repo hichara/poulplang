@@ -4,6 +4,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <llvm/Value.h>
 
 enum {
     OP_ADD,
@@ -13,123 +14,147 @@ enum {
     OP_MINUS
 };
 
-const char* GetOperationName( int op );
-const std::string GetIdentation( int level, const std::string& chars );
-extern const char* IdentChars;
+typedef std::string String;
 
-class ASTNode{
+class CodeGenContext;
+
+class Statement;
+class Expression;
+class VariableDeclaration;
+
+typedef std::vector<Statement*> StatementList;
+typedef std::vector<Expression*> ExpressionList;
+typedef std::vector<VariableDeclaration*> VariableList;
+
+
+class Node{
 public:
-    virtual std::string str( int ident = 0 ) = 0;
+    //virtual ~Node();
+    virtual String str( int ident = 0 ) { return "Node"; }
+    virtual llvm::Value* codeGen(CodeGenContext& context) { return 0; }
 };
 
-class ExpressionNode : public ASTNode {
+class Expression : public Node {
 public:
-    ExpressionNode(){}
-
-    std::string str( int ident = 0 ){
-        return GetIdentation( ident, IdentChars ) + "Expression Node";
-    }
+    String str( int ident = 0 );
 };
 
-class VariableNode : public ExpressionNode {
-public:
-    const std::string& name;
-
-    VariableNode( const std::string& varName ) :
-        name( varName ){
-    }
-
-    std::string str( int ident = 0 ){
-        return GetIdentation( ident, IdentChars ) + "Variable Node " + name;
-    }
+class Statement : public Node {
 };
 
-class LiteralValueNode : public ExpressionNode {
+class Identifier : public Expression {
+public:
+    const String& name;
+
+    Identifier( const String& name ) : name(name) { }
+
+    virtual llvm::Value* codeGen(CodeGenContext& context);
+};
+
+class Integer : public Expression {
+public:
+    int value;
+    Integer( int value ) : value(value){}
+
+    //String str( int ident = 0 );
+
+    llvm::Value* codeGen(CodeGenContext& context);
+};
+
+class Double : public Expression {
 public:
     double value;
-    LiteralValueNode( double value ){
-        this->value = value;
-    }
+    Double( double value ) : value(value){}
 
-    std::string str( int ident = 0 ){
-        std::stringstream stream;
-        stream  << GetIdentation( ident, IdentChars )
-                << "Literal Value " << value;
-        return stream.str();
-    }
+    //String str( int ident = 0 );
+
+    virtual llvm::Value* codeGen(CodeGenContext& context);
 };
 
-class BinaryArithOpNode : public ExpressionNode {
+class BinaryOperation : public Expression {
 public:
     int op;
-    ExpressionNode *rhs, *lhs;
+    Expression& rhs;
+    Expression& lhs;
 
-    BinaryArithOpNode( int op, 
-        ExpressionNode* lhs,
-        ExpressionNode* rhs ) :
-        op(op), lhs(lhs), rhs(rhs){
-    }
+    BinaryOperation( int op, Expression& lhs, Expression& rhs ) :
+        op(op), lhs(lhs), rhs(rhs) {}
 
-    std::string str( int ident = 0 ){
-        std::string il1 = GetIdentation( ident, IdentChars );
-        std::string il2 = GetIdentation( ident + 1, IdentChars );
+    String str( int ident = 0 );
 
-        std::stringstream stream;
-        stream  << il1 << "BinaryArithmetic" << "\n"
-                << il2 << GetOperationName(op) << "\n"
-                << lhs->str( ident + 1 ) << "\n"
-                << rhs->str( ident + 1 );
-        return stream.str();
-    }
+    virtual llvm::Value* codeGen(CodeGenContext& context);
 };
 
-class BinaryLogicOperationNode : public ASTNode {
+class StatementBlock: public Expression {
 public:
-    std::string str( int ident = 0 ){
-        return GetIdentation( ident, IdentChars ) + "Binary Logic Operation Node";
-    }
+    StatementList statements;
+    virtual llvm::Value* codeGen(CodeGenContext& context);
 };
 
-class FunctionDefinitionNode : public ASTNode {
+class MethodCall : public Expression {
 public:
-    std::string str( int ident = 0 ){
-        return GetIdentation( ident, IdentChars ) + "Function Definition Node";
-    }
+    const Identifier& methodName;
+    ExpressionList arguments;
+
+    MethodCall( const Identifier& name, ExpressionList& args ) :
+        methodName(name), arguments(args) { }
+
+    MethodCall( const Identifier& name ) :
+        methodName(name) { }
+
+    //virtual String str( int ident );
+
+    virtual llvm::Value* codeGen(CodeGenContext& context);
 };
 
-class StatementListNode : public ASTNode {
+class Assignment : public Expression {
 public:
-    std::string str( int ident = 0 ){
-        return GetIdentation( ident, IdentChars ) + "Statement List Node";
-    }
+    const Identifier& lhs;
+    Expression* rhs;
+
+    Assignment( const Identifier& lhs, Expression* rhs ) :
+        lhs(lhs), rhs(rhs) { }
+
+    virtual llvm::Value* codeGen(CodeGenContext& context);
 };
 
-class ExpressionListNode : public ASTNode {
+
+class FunctionDeclaration : public Statement {
 public:
-    std::vector<ASTNode*> nodes;
-    ExpressionListNode( ASTNode* elem ){
-        nodes.push_back( elem );
-    }
-    
-    ExpressionListNode* append( ASTNode* elem ){
-        nodes.push_back(elem);
-        return this;
-    }
+    const Identifier& functionType;
+    const Identifier& functionName;
+    VariableList arguments;
+    StatementBlock block;
 
-    std::string str( int ident = 0 ){
-        std::stringstream stream;
-        std::string il1 = GetIdentation( ident, IdentChars );
-        std::string il2 = GetIdentation( ident, IdentChars );
+    FunctionDeclaration( const Identifier& type, const Identifier& name, VariableList args, StatementBlock& block ) :
+        functionType(type), functionName(name), arguments(args), block(block) { }
 
-        stream << il1 << "ExpressionListNode" << "\n";
+    virtual llvm::Value* codeGen(CodeGenContext& context);
+};
 
-        for( int i = 0; i < nodes.size()-1; ++i ){
-            stream << nodes[i]->str( ident + 1 ) << "\n";
-        }
+class ExpressionStatement : public Statement {
+public:
+    Expression& expression;
 
-        stream << nodes[nodes.size()-1]->str( ident + 1 ) << "\n";
-        return stream.str();
-    }
+    ExpressionStatement( Expression& expression ) :
+        expression( expression ) { }
+
+    virtual llvm::Value* codeGen(CodeGenContext& context);
+};
+
+class VariableDeclaration : public Statement {
+public:
+    const Identifier& type;
+    const Identifier& name;
+    Expression* assignmentExpression;
+
+    VariableDeclaration( const Identifier& type, const Identifier& name ) :
+        type(type), name(name) { }
+
+    VariableDeclaration( const Identifier& type, const Identifier& name, Expression* value ) :
+        type(type), name(name), assignmentExpression(value) { }
+
+    virtual llvm::Value* codeGen(CodeGenContext& context);
 };
 
 #endif

@@ -21,7 +21,7 @@ inline int numToken( int token ){
     yylval.token = token;
 
     if( debugTokens ){
-        printf("TOKEN\tKEYWORD\t%d\t%s\n", token, yytext);
+        printf("TOKEN\tKEYWORD\t\t%d\t%s\n", token, yytext);
     }
 
     return token;
@@ -31,7 +31,7 @@ inline double dblToken( int token ){
     sscanf( yytext, "%lf", &yylval.number );
 
     if( debugTokens ){
-        printf("TOKEN\tNUMBER\t%d\t%s\n", token, yytext);
+        printf("TOKEN\tNUMBER\t\t%d\t%s\n", token, yytext);
     }
 
     return token;
@@ -41,6 +41,7 @@ inline double dblToken( int token ){
 
 %%
 [ \t\n]                 ;
+
 [a-zA-Z_][a-zA-Z0-9_]*  return strToken(T_IDENTIFIER);
 [0-9]+\.[0-9]*          return dblToken(T_NUM_DOUBLE);
 [0-9]+                  return dblToken(T_NUM_INTEGER);
@@ -60,6 +61,7 @@ inline double dblToken( int token ){
 "-"                     return numToken(T_MINUS);
 "/"                     return numToken(T_DIV);
 "*"                     return numToken(T_MUL);
+","                     return numToken(T_COMMA);
 .                       printf("Unkown token!\n"); yyterminate();
 %%
 

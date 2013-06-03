@@ -2,10 +2,13 @@
 #include <stdio.h>
 #include  <sstream>
 #include "ast.h"
+#include "codegen.h"
+
+#include <fstream>
 
 using namespace std;
 
-extern ExpressionListNode* programBlock; 
+extern StatementBlock* programBlock;
 extern int yyparse();
 
 extern bool debugTokens;
@@ -15,7 +18,7 @@ std::string line = "---------------------------";
 
 void printAST(){
     cout << line << "\nAbstract Sintax Tree\n" << line << "\n";
-    cout << programBlock->str() << endl;
+    //cout << programBlock->str() << endl;
 }
 
 int main( int argc, char** argv ){
@@ -36,6 +39,16 @@ int main( int argc, char** argv ){
     if( debugAST ){
         printAST();
     }
+
+    CodeGenContext context;
+    cout << line << "\nCode Generator\n" << line << "\n";
+    std::string asmCode = context.generateCode(*programBlock);
+
+    ofstream fout("out.ll");
+    fout << asmCode;
+    fout.close();
+
+    //context.runCode();
 
     return 0;
 }

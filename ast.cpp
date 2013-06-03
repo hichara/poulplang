@@ -15,3 +15,19 @@ const std::string GetIdentation( int level, const std::string& chars  ){
     }
     return stream.str();
 }
+
+String Expression::str( int ident ){
+    return "Expression Node";
+}
+
+String BinaryOperation::str( int ident ){
+    std::string il1 = GetIdentation( ident, IdentChars );
+    std::string il2 = GetIdentation( ident + 1, IdentChars );
+
+    std::stringstream stream;
+    stream  << il1 << "BinaryArithmetic" << "\n"
+            << il2 << GetOperationName(op) << "\n"
+            << lhs.str( ident + 1 ) << "\n"
+            << rhs.str( ident + 1 );
+    return stream.str();
+}
