@@ -113,10 +113,10 @@ GenericValue CodeGenContext::runCode() {
 /* Returns an LLVM type based on the identifier */
 static Type *typeOf(const Identifier& type)
 {
-    if (type.name.compare("entier") == 0 || type.name.compare("int") == 0) {
+    if (type.name.compare("int") == 0) {
         return Type::getInt32Ty(getGlobalContext());
     }
-    else if (type.name.compare("decimal") == 0 || type.name.compare("double") == 0) {
+    else if (type.name.compare("double") == 0) {
         return Type::getDoubleTy(getGlobalContext());
     }
     return Type::getVoidTy(getGlobalContext());
