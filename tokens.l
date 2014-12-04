@@ -7,7 +7,7 @@
 extern bool debugTokens;
 
 int lineNumber = 1;
-
+int singleLineComment = 0;
 
 // Helper export functions
 inline int strToken( int token ){

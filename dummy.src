@@ -1,18 +1,5 @@
-int fibo( int n ){
-    if( n < 3 ){
-        return 1;
-    } else {
-        return fibo( n - 1 ) + fibo( n - 2 );
-    };
+int test(int a) {
+    printf("%d plus petit que 5\n", a);
 };
 
-double first_fibo( int count ){
-    if( count > 0 ){
-        first_fibo( count - 1 );
-        printf( "Fib[%d] = %d\n", count, fibo(count) );
-        return 0.5;
-    } else {
-        return 0.1;
-    };
-};
-
+test(4);

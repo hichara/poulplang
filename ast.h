@@ -5,7 +5,7 @@
 #include <string>
 #include <stdio.h>
 #include <vector>
-#include <llvm/Value.h>
+#include <llvm/IR/Value.h>
 
 enum {
     OP_ADD,

@@ -5,7 +5,7 @@
 #include <iostream>
 #include <typeinfo>
 #include <llvm/Support/raw_ostream.h>
-#include <llvm/Support/IRBuilder.h>
+#include <llvm/IR/IRBuilder.h>
 
 using namespace std;
 
@@ -14,9 +14,9 @@ int BranchStatement::instanceCount = 0;
 
 static llvm::Function* getPutcharPrototype(llvm::LLVMContext& ctx, llvm::Module *mod)
 {
-    vector<const Type*> argTypes;
-    argTypes.push_back(Type::getInt32Ty(ctx));
-    FunctionType *ftype = FunctionType::get(Type::getInt32Ty(ctx), argTypes, false);
+    vector<Type*> argTypes;
+    //argTypes.push_back(Type::getInt32Ty(ctx));
+    FunctionType *ftype = FunctionType::get(Type::getVoidTy(getGlobalContext()), makeArrayRef(argTypes), false);
     Function* func = Function::Create(ftype, GlobalValue::ExternalLinkage, "putchar", mod);
     func->setCallingConv(llvm::CallingConv::C);
     
@@ -26,13 +26,30 @@ static llvm::Function* getPutcharPrototype(llvm::LLVMContext& ctx, llvm::Module 
 
 static llvm::Function* getPrintfPrototype(llvm::LLVMContext& ctx, llvm::Module *mod)
 {
-    std::vector<const Type*> argTypes;
+    /*
+    std::vector<Type*> argTypes;
     argTypes.push_back(Type::getInt8PtrTy(ctx));
-    FunctionType* ftype = FunctionType::get( Type::getInt32Ty(ctx), argTypes, true);
+    FunctionType* ftype = FunctionType::get(Type::getVoidTy(getGlobalContext()), makeArrayRef(argTypes), false);
     Function *func = Function::Create( ftype, Function::ExternalLinkage, Twine("printf"), mod );
     func->setCallingConv(llvm::CallingConv::C);
 
     return func;
+    /*/
+    std::vector<llvm::Type*> argTypes;
+    argTypes.push_back(llvm::Type::getInt8PtrTy(getGlobalContext())); //char*
+
+    llvm::FunctionType* printf_type =
+        llvm::FunctionType::get(
+            llvm::Type::getInt32Ty(getGlobalContext()), argTypes, true);
+
+    llvm::Function *func = llvm::Function::Create(
+                printf_type, llvm::Function::ExternalLinkage,
+                llvm::Twine("printf"),
+                mod
+           );
+    func->setCallingConv(llvm::CallingConv::C);
+    return func;
+    //*/
 }
 
 /* Compile the AST into a module */
@@ -41,8 +58,8 @@ std::string CodeGenContext::generateCode(StatementBlock& root)
     Log::Debug() << "Generating code...\n";
 
     /* Create the top level interpreter function to call as entry */
-    vector<const Type*> argTypes;
-    FunctionType *ftype = FunctionType::get(Type::getInt32Ty(getGlobalContext()), argTypes, false);
+    vector<Type*> argTypes;
+    FunctionType *ftype = FunctionType::get(Type::getVoidTy(getGlobalContext()), makeArrayRef(argTypes), false);
     mainFunction = Function::Create(ftype, GlobalValue::ExternalLinkage, "main", module);
     mainFunction->setCallingConv(llvm::CallingConv::C);
     BasicBlock *bblock = BasicBlock::Create(getGlobalContext(), "entry", mainFunction, 0);
@@ -58,8 +75,8 @@ std::string CodeGenContext::generateCode(StatementBlock& root)
     
     root.codeGen(*this); /* emit bytecode for the toplevel block */
 
-    ReturnInst::Create(getGlobalContext(), ConstantInt::get(Type::getInt32Ty(getGlobalContext()), 0), bblock);
-
+    //ReturnInst::Create(getGlobalContext(), ConstantInt::get(Type::getInt32Ty(getGlobalContext()), 0), bblock);
+    ReturnInst::Create(getGlobalContext(), bblock);
     popBlock();
 
     /* Print the bytecode in a human-readable format
@@ -94,12 +111,12 @@ GenericValue CodeGenContext::runCode() {
 }
 
 /* Returns an LLVM type based on the identifier */
-static const Type *typeOf(const Identifier& type)
+static Type *typeOf(const Identifier& type)
 {
-    if (type.name.compare("int") == 0) {
+    if (type.name.compare("entier") == 0 || type.name.compare("int") == 0) {
         return Type::getInt32Ty(getGlobalContext());
     }
-    else if (type.name.compare("double") == 0) {
+    else if (type.name.compare("decimal") == 0 || type.name.compare("double") == 0) {
         return Type::getDoubleTy(getGlobalContext());
     }
     return Type::getVoidTy(getGlobalContext());
@@ -137,6 +154,7 @@ Value* Identifier::codeGen(CodeGenContext& context)
 
 Value* MethodCall::codeGen(CodeGenContext& context)
 {
+    /*
     Function *function = context.module->getFunction(methodName.name.c_str());
     if (function == NULL) {
         Log::Error() << " no such function " << methodName.name << std::endl;
@@ -151,6 +169,21 @@ Value* MethodCall::codeGen(CodeGenContext& context)
     CallInst *call = CallInst::Create(function, args.begin(), args.end(), "", context.currentBlock());
     Log::Debug() << "Creating method call: " << methodName.name << std::endl;
     return call;
+    /*/
+
+    Function *function = context.module->getFunction(methodName.name.c_str());
+    if (function == NULL) {
+        std::cerr << "no such function " << methodName.name << endl;
+    }
+    std::vector<Value*> args;
+    ExpressionList::const_iterator it;
+    for (it = arguments.begin(); it != arguments.end(); it++) {
+        args.push_back((**it).codeGen(context));
+    }
+    CallInst *call = CallInst::Create(function, makeArrayRef(args), "", context.currentBlock());
+    std::cout << "Creating method call: " << methodName.name << endl;
+    return call;
+    //*/
 }
 
 Value* PrintfMethodCall::codeGen(CodeGenContext& context)
@@ -168,7 +201,8 @@ Value* PrintfMethodCall::codeGen(CodeGenContext& context)
     }
     
     /* format string */
-    Constant *format_const = ConstantArray::get(getGlobalContext(), fmt.c_str());
+    //Constant *format_const = ConstantArray::get(getGlobalContext(), fmt.c_str());
+    Constant *format_const = ConstantDataArray::getString(getGlobalContext(), fmt.c_str());
     GlobalVariable *var = new GlobalVariable(
         *context.module, ArrayType::get(IntegerType::get(getGlobalContext(), 8), fmt.size()+1),
         true, GlobalValue::PrivateLinkage, format_const, name.c_str());
@@ -191,7 +225,10 @@ Value* PrintfMethodCall::codeGen(CodeGenContext& context)
         args.push_back((**it).codeGen(context));
     }
 
-    CallInst *call = CallInst::Create(context.printfFunction, args.begin(), args.end(), "", context.currentBlock());
+    CallInst *call = CallInst::Create(context.printfFunction, makeArrayRef(args), "", context.currentBlock());
+  //CallInst *call = CallInst::Create(function, args.begin(), args.end(), "", context.currentBlock());
+
+  //CallInst *call = CallInst::Create(context.printfFunction, args.begin(), args.end(), "", context.currentBlock());
     call->setTailCall(false);
     
     return call;
@@ -262,6 +299,7 @@ Value* ExpressionStatement::codeGen(CodeGenContext& context)
 
 Value* VariableDeclaration::codeGen(CodeGenContext& context)
 {
+    /*
     Log::Debug() << "Creating variable declaration " << type.name << " " << name.name << std::endl;
     AllocaInst *alloc = new AllocaInst(typeOf(type), name.name.c_str(), context.currentBlock());
     context.locals()[name.name] = alloc;
@@ -270,10 +308,22 @@ Value* VariableDeclaration::codeGen(CodeGenContext& context)
         assn.codeGen(context);
     }
     return alloc;
+    /*/
+    std::cout << "Creating variable declaration " << type.name << " " << name.name << endl;
+    AllocaInst *alloc = new AllocaInst(typeOf(type), name.name.c_str(), context.currentBlock());
+    context.locals()[name.name] = alloc;
+    if (assignmentExpression != NULL) {
+        Assignment assn(name, assignmentExpression);
+        assn.codeGen(context);
+    }
+
+    return alloc;
+    //*/
 }
 
 Value* FunctionDeclaration::codeGen(CodeGenContext& context)
 {
+    /*
     vector<const Type*> argTypes;
     VariableList::const_iterator it;
     for (it = arguments.begin(); it != arguments.end(); it++) {
@@ -301,6 +351,36 @@ Value* FunctionDeclaration::codeGen(CodeGenContext& context)
     Log::Debug() << "Creating function: " << functionName.name << std::endl;
     context.currentFunction = context.mainFunction;
     return function;
+    /*/
+    vector<Type*> argTypes;
+    VariableList::const_iterator it;
+    for (it = arguments.begin(); it != arguments.end(); it++) {
+        argTypes.push_back(typeOf((**it).type));
+    }
+    FunctionType *ftype = FunctionType::get(typeOf(functionType), makeArrayRef(argTypes), false);
+    Function *function = Function::Create(ftype, GlobalValue::ExternalLinkage, functionName.name.c_str(), context.module);
+    BasicBlock *bblock = BasicBlock::Create(getGlobalContext(), "entry", function, 0);
+
+    context.pushBlock(bblock);
+
+    Function::arg_iterator argsValues = function->arg_begin();
+    Value* argumentValue;
+
+    for (it = arguments.begin(); it != arguments.end(); it++) {
+        (**it).codeGen(context);
+        
+        argumentValue = argsValues++;
+        argumentValue->setName((*it)->name.name.c_str());
+        StoreInst *inst = new StoreInst(argumentValue, context.locals()[(*it)->name.name], false, bblock);
+    }
+    
+    block.codeGen(context);
+    //ReturnInst::Create(getGlobalContext(), context.getCurrentReturnValue(), bblock);
+
+    context.popBlock();
+    std::cout << "Creating function: " << functionName.name << endl;
+    return function;
+    //*/
 }
 
 Value* ReturnStatement::codeGen(CodeGenContext& context)
@@ -311,14 +391,15 @@ Value* ReturnStatement::codeGen(CodeGenContext& context)
 
 Value* BranchStatement::codeGen(CodeGenContext& context)
 {
-    Log::Debug() << "Generating code for " << typeid(this).name() << std::endl;
+    std::cout << "Generating code for " << typeid(this).name() << std::endl;
     IRBuilder<> builder(context.currentBlock());
     Value* test = testExpression->codeGen( context );
-    
-    BasicBlock *btrue = BasicBlock::Create(getGlobalContext(), getUniqueName(), context.currentFunction);
+    Function *TheFunction = builder.GetInsertBlock()->getParent();
+
+    BasicBlock *btrue = BasicBlock::Create(getGlobalContext(), getUniqueName(), TheFunction);
         BasicBlock *bfalse = NULL;
     if( hasFalseBranch ){
-        bfalse = BasicBlock::Create(getGlobalContext(), getUniqueName(), context.currentFunction);
+        bfalse = BasicBlock::Create(getGlobalContext(), getUniqueName(), TheFunction);
     }
 
     builder.CreateCondBr(test, btrue, bfalse);
@@ -332,6 +413,6 @@ Value* BranchStatement::codeGen(CodeGenContext& context)
         blockFalse.codeGen(context);
         context.popBlock();
     }
-
+    std::cout << "Generated. " << std::endl;
     return NULL;
 }
