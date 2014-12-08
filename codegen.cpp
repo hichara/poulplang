@@ -391,13 +391,14 @@ Value* ReturnStatement::codeGen(CodeGenContext& context)
 
 Value* BranchStatement::codeGen(CodeGenContext& context)
 {
+    //*
     std::cout << "Generating code for " << typeid(this).name() << std::endl;
     IRBuilder<> builder(context.currentBlock());
     Value* test = testExpression->codeGen( context );
     Function *TheFunction = builder.GetInsertBlock()->getParent();
-
+    
     BasicBlock *btrue = BasicBlock::Create(getGlobalContext(), getUniqueName(), TheFunction);
-        BasicBlock *bfalse = NULL;
+    BasicBlock *bfalse = NULL;
     if( hasFalseBranch ){
         bfalse = BasicBlock::Create(getGlobalContext(), getUniqueName(), TheFunction);
     }
@@ -415,4 +416,29 @@ Value* BranchStatement::codeGen(CodeGenContext& context)
     }
     std::cout << "Generated. " << std::endl;
     return NULL;
+    /*/
+    Log::Debug() << "Generating code for " << typeid(this).name() << std::endl;
+    IRBuilder<> builder(context.currentBlock());
+    Value* test = testExpression->codeGen( context );
+    
+    BasicBlock *btrue = BasicBlock::Create(getGlobalContext(), getUniqueName(), context.currentFunction);
+        BasicBlock *bfalse = NULL;
+    if( hasFalseBranch ){
+        bfalse = BasicBlock::Create(getGlobalContext(), getUniqueName(), context.currentFunction);
+    }
+
+    builder.CreateCondBr(test, btrue, bfalse);
+
+    context.pushBlock(btrue);
+    blockTrue.codeGen(context);
+    context.popBlock();
+ 
+    if( hasFalseBranch ){   
+        context.pushBlock(bfalse);
+        blockFalse.codeGen(context);
+        context.popBlock();
+    }
+
+    return NULL;
+    //*/
 }

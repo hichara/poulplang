@@ -24,4 +24,4 @@ native-compiler: llc
 	gcc -o out out.s -g
 
 run: lft-cc
-	./lft-cc dummy.src
+	./lft-cc source.poulp

@@ -1,5 +1,0 @@
-int test(int a) {
-    printf("%d plus petit que 5\n", a);
-};
-
-test(4);

@@ -1,0 +1,13 @@
+int test(int a) {
+   if (a < 5) {
+      int aa = 4;
+      printf("%d salut\n", aa);
+      return 2;
+   } else {
+      return 3;
+   };
+   return 1;
+};
+
+printf("%d\n", test(4));
+
